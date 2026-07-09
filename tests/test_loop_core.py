@@ -1,4 +1,4 @@
-# Last modified: 2026-07-09T11:56:00.989Z
+# Last modified: 2026-07-09T21:10:00.420Z
 
 from __future__ import annotations
 
@@ -94,6 +94,47 @@ def test_analyze_infers_security_demo_specialist(tmp_path: Path) -> None:
     assert "profile-security-demo" in summary["signals"]
 
 
+def test_analyze_infers_teams_live_before_typescript_fallback(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    src = tmp_path / "src" / "channel-core"
+    docs.mkdir()
+    src.mkdir(parents=True)
+    (tmp_path / "README.md").write_text(
+        "# Family Teams Live Agent\n\nA local shim for teams.live.com consumer chats.\n",
+        encoding="utf-8",
+    )
+    (docs / "api-research.md").write_text(
+        "# Teams Consumer API Research\n\nUse teams.live.com/api/chatsvc/consumer and msgapi.teams.live.com behind a local browser session.\n",
+        encoding="utf-8",
+    )
+    (src / "types.ts").write_text("export type Message = { id: string };\n", encoding="utf-8")
+
+    summary = analyze_github_loop(str(tmp_path))
+
+    assert summary["primaryKind"] == "teams-live"
+    assert summary["suggestedSpecialist"] == "Teams Live shim agent"
+    assert "profile-teams-live" in summary["signals"]
+
+
+def test_analyze_honors_teams_live_objectives_profile_override(tmp_path: Path) -> None:
+    github = tmp_path / ".github"
+    github.mkdir()
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    (github / "objectives.md").write_text(
+        "# Repository Objectives\n\n"
+        "## Working Profile\n\n"
+        "- Detected profile: Teams Live local-agent shim\n"
+        "- Suggested specialist: Teams Live shim agent\n",
+        encoding="utf-8",
+    )
+
+    summary = analyze_github_loop(str(tmp_path))
+
+    assert summary["primaryKind"] == "teams-live"
+    assert summary["suggestedSpecialist"] == "Teams Live shim agent"
+    assert "profile-from-objectives" in summary["signals"]
+
+
 def test_apply_preserves_existing_instructions_and_adds_managed_files(tmp_path: Path) -> None:
     github = tmp_path / ".github"
     github.mkdir()
@@ -142,6 +183,16 @@ def test_apply_creates_missing_github_structure(tmp_path: Path) -> None:
     assert (tmp_path / ".github" / "agents" / "repo-specialist-agent.agent.md").exists()
     assert (tmp_path / ".github" / "insights" / "loop-improver-mcp.md").exists()
     assert "README.md" in result["after"]["missing"]
+
+
+def test_apply_creates_objectives_for_typescript_repo(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"social-promoter-mcp","type":"module"}\n', encoding="utf-8")
+
+    result = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+
+    assert ".github/objectives.md" in result["changed"]
+    assert (tmp_path / ".github" / "objectives.md").exists()
+    assert result["after"]["primaryKind"] == "typescript"
 
 
 def test_apply_refreshes_managed_objective_rubric_and_preserves_repo_sections(tmp_path: Path) -> None:

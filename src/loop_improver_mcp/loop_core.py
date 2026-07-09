@@ -1,4 +1,4 @@
-# Last modified: 2026-07-09T11:56:00.989Z
+# Last modified: 2026-07-09T21:10:00.420Z
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import re
 from typing import Any, Literal
 
 
-RepoKind = Literal["rust", "python", "typescript", "blog", "docs", "bicep", "security-demo", "generic"]
+RepoKind = Literal["rust", "python", "typescript", "blog", "docs", "bicep", "security-demo", "teams-live", "generic"]
 
 MANAGED_MARKER = "<!-- Managed by loop-improver-mcp -->"
 
@@ -33,7 +33,7 @@ def analyze_github_loop(repo_path: str, stale_after_days: int = 30, now: datetim
     github = repo / ".github"
     github_files = _list_relative_files(github) if github.exists() else []
     repo_files = _list_repo_files(repo)
-    profile = _infer_repo_profile(repo_files)
+    profile = _infer_repo_profile(repo, repo_files)
 
     readme = _read_optional(repo / "README.md")
     copilot = _read_optional(github / "copilot-instructions.md")
@@ -310,13 +310,19 @@ def _analyze_objectives(content: str) -> Hygiene:
     return Hygiene(signals, [finding for finding in findings if finding])
 
 
-def _infer_repo_profile(files: list[str]) -> RepoProfile:
+def _infer_repo_profile(repo: Path, files: list[str]) -> RepoProfile:
     has = set(files).__contains__
     has_ext = lambda suffix: any(file.endswith(suffix) for file in files)
     has_path = lambda pattern: any(re.search(pattern, file) for file in files)
+    profile_override = _profile_from_objectives(repo / ".github" / "objectives.md")
+    if profile_override:
+        return profile_override
+    repo_context = _repo_profile_context(repo, files)
 
     if has("scout/loops/security-se-loop.json") or has("docs/a365-eval.md") or has_path(r"(^|/)security-solution-engineer/"):
         return RepoProfile("security-demo", ["profile-security-demo"], "Security demo infrastructure specialist", "Keep Microsoft security demo infrastructure, validation evidence, Scout loops, and customer-ready narratives aligned to the repo objectives.")
+    if re.search(r"teams\.live\.com|msgapi\.teams\.live\.com|chatsvc/consumer|teams live", repo_context, re.I):
+        return RepoProfile("teams-live", ["profile-teams-live"], "Teams Live shim agent", "Keep the consumer Teams Live browser-session/private-endpoint bridge isolated, consent-based, auditable, and aligned to the repo objectives.")
     if has("Cargo.toml") or has_ext(".rs"):
         return RepoProfile("rust", ["profile-rust"], "Rust hygiene specialist", "Prune dead Rust code, reduce unnecessary verbosity, and keep tests or CLI behavior aligned with the repo objectives.")
     if has("pyproject.toml") or has_ext(".py"):
@@ -331,6 +337,33 @@ def _infer_repo_profile(files: list[str]) -> RepoProfile:
     if markdown_count >= max(3, len(files) / 2):
         return RepoProfile("docs", ["profile-docs"], "Documentation clarity specialist", "Keep documentation concise, human-readable, accurate, and free of duplicated operational guidance.")
     return RepoProfile("generic", ["profile-generic"], "Repository specialist", "Identify the repo's recurring work and create small verified improvement loops around it.")
+
+
+def _profile_from_objectives(path: Path) -> RepoProfile | None:
+    content = _read_text_optional(path)
+    if not content:
+        return None
+    match = re.search(r"^-\s*Detected profile:\s*(.+)$", content, re.M)
+    if not match:
+        return None
+    detected = match.group(1).strip()
+    if re.search(r"teams live|teams-live|chatsvc/consumer|msgapi\.teams\.live\.com", detected, re.I):
+        return RepoProfile("teams-live", ["profile-teams-live", "profile-from-objectives"], "Teams Live shim agent", "Keep the consumer Teams Live browser-session/private-endpoint bridge isolated, consent-based, auditable, and aligned to the repo objectives.")
+    return None
+
+
+def _repo_profile_context(repo: Path, files: list[str]) -> str:
+    candidate_files = [
+        file
+        for file in files
+        if file in {"README.md", ".github/objectives.md"} or file.startswith("docs/") and file.endswith(".md")
+    ]
+    chunks: list[str] = []
+    for file in candidate_files[:20]:
+        content = _read_text_optional(repo / file)
+        if content:
+            chunks.append(content[:5000])
+    return "\n".join(chunks)
 
 
 def _outcome_expectations(profile: RepoProfile) -> dict[str, list[str]]:
