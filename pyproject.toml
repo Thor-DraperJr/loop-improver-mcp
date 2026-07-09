@@ -1,0 +1,26 @@
+[project]
+# Last modified: 2026-07-09T15:10:00.000Z
+
+name = "loop-improver-mcp"
+version = "0.1.0"
+description = "MCP server that creates repo-specific improvement loops from README, Copilot instructions, objectives, agents, and insights."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.27,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+loop-improver-mcp = "loop_improver_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,13 @@
+# Last modified: 2026-07-09T11:56:00.989Z
+
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+.vscode/
+*.egg-info/
+build/
+dist/
+*.log
+.env
