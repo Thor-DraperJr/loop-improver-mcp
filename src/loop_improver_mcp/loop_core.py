@@ -493,6 +493,7 @@ Canonical files have separate jobs:
 - Use the opening exchange to establish a concise session title, direction, and agreed endpoint before starting a loop.
 - Identify objectives from the repo's actual files, tests, docs, and recurring work.
 - Let this MCP server own loop architecture; deploy repo agents only for recurring domain work.
+- Prioritize readable code: names and structure should make behavior clear. Use focused comments for non-obvious behavior, invariants, and rationale; documentation must not substitute for code that explains itself.
 - Each agent must end passes by recording insights and applying obvious agent/doc improvements directly.
 - Each agent must keep the insights loop current by overwriting its current insight after focused passes.
 - Prefer pruning, moving, or merging stale code and docs over adding parallel surfaces.

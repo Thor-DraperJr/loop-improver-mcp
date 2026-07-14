@@ -1,11 +1,12 @@
-# Last modified: 2026-07-09T11:56:00.989Z
+# Last modified: 2026-07-14T00:00:00.000Z
 
 __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .venv/
-.vscode/
+.vscode/*
+!.vscode/mcp.json
 *.egg-info/
 build/
 dist/

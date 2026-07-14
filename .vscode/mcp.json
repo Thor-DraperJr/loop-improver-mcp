@@ -1,0 +1,16 @@
+{
+    "servers": {
+        "loop-improver": {
+            "type": "stdio",
+            "command": "uv",
+            "args": [
+                "tool",
+                "run",
+                "--from",
+                ".",
+                "loop-improver-mcp"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    }
+}

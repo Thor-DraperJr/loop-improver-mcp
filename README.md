@@ -30,3 +30,11 @@ The server evaluates canonical files against a desired shape:
 Call `compare_loops` against older repos, then call `improve_loop` on repos missing the foundation or carrying stale guidance. Managed files are marked with `<!-- Managed by loop-improver-mcp -->` so later refreshes can update the loop without overwriting unrelated repo guidance.
 
 The generated specialist guidance adapts to the repo profile, such as Python MCP hygiene, Rust hygiene, TypeScript product hygiene, blog voice/editing, docs clarity, infrastructure validation, or Security SE demo validation. The architecture loop remains in the MCP server.
+
+## Use With GitHub Copilot
+
+Paste this into GitHub Copilot Chat after opening the repository:
+
+```text
+Install and configure this repository's loop-improver MCP server for my VS Code GitHub Copilot environment. Follow .github/mcp-install.md, verify that the server starts, and keep the configuration portable for future updates.
+```
