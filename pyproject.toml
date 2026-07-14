@@ -1,5 +1,5 @@
 [project]
-# Last modified: 2026-07-09T15:10:00.000Z
+# Last modified: 2026-07-14T00:00:00.000Z
 
 name = "loop-improver-mcp"
 version = "0.1.0"
@@ -12,6 +12,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.12",
+    "vulture>=2.14",
 ]
 
 [project.scripts]
@@ -24,3 +26,13 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff.lint]
+select = ["B", "C4", "D100", "D101", "D102", "D103", "D104", "F", "I", "RET", "RUF", "SIM", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D100", "D101", "D102", "D103", "D104"]
+
+[tool.vulture]
+paths = ["src", "tests"]
+min_confidence = 80

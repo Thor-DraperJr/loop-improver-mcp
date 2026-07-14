@@ -1,11 +1,11 @@
-<!-- Last modified: 2026-07-09T11:55:41.048Z -->
+<!-- Last modified: 2026-07-14T00:00:00.000Z -->
 <!-- Managed by loop-improver-mcp -->
 
 # repo-specialist-agent insight
 
-## 2026-07-09T13:40:00.146Z - Align specialist profile with Python MCP surface
+## 2026-07-14T00:00:00.000Z - Enforce readable code in specialist loops
 **Mission:** repo specialist
-**Improved:** Added Python MCP repo-profile inference, refreshed this repo's objectives and specialist agent away from stale TypeScript wording, and verified with `python -m pytest tests/test_loop_core.py`.
-**Prune candidates:** stale generated profile wording in previously managed objectives/agent files when profile inference improves.
-**Reusable learnings:** Python MCP repos need explicit `pyproject.toml`/`.py` detection before TypeScript/docs fallback so outcome expectations and specialist guidance regenerate correctly.
-**Agent self-improvement:** Keep self-application passes tied to generator behavior plus current managed files, not only one side.
+**Improved:** Added concise orientation docstrings across production source, an AST readability audit for every module and symbol, and a generated-agent code audit that searches usages and runs dead-code tooling; verified with tests, Ruff, and Vulture.
+**Prune candidates:** duplicate helpers and high-confidence unused symbols found during future reference audits.
+**Reusable learnings:** File and symbol descriptions make code easier to enter, while usage searches plus dead-code tooling make long-session bloat easier to detect and remove safely.
+**Agent self-improvement:** Require agents to search before adding helpers, audit changed and nearby symbol references, and verify automated dead-code findings before deletion.

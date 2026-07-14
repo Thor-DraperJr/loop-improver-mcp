@@ -1,4 +1,4 @@
-<!-- Last modified: 2026-07-09T11:56:00.989Z -->
+<!-- Last modified: 2026-07-14T00:00:00.000Z -->
 
 # loop-improver-mcp
 
@@ -25,11 +25,13 @@ The server evaluates canonical files against a desired shape:
 - `.github/agents/`: contains specialist guidance only for recurring domain work.
 - `.github/insights/`: records one current insight per MCP or specialist surface with verified improvements, prune candidates, reusable learnings, and self-improvement notes.
 
+Generated specialists also audit changed and nearby symbols for duplicate helpers and unused code. In this repository, Ruff enforces source orientation and code-quality rules, the readability test checks every production module and symbol for concise descriptions, and Vulture reports high-confidence dead-code candidates for reference verification.
+
 ## Usage Shape
 
 Call `compare_loops` against older repos, then call `improve_loop` on repos missing the foundation or carrying stale guidance. Managed files are marked with `<!-- Managed by loop-improver-mcp -->` so later refreshes can update the loop without overwriting unrelated repo guidance.
 
-The generated specialist guidance adapts to the repo profile, such as Python MCP hygiene, Rust hygiene, TypeScript product hygiene, blog voice/editing, docs clarity, infrastructure validation, or Security SE demo validation. The architecture loop remains in the MCP server.
+The generated specialist guidance adapts to portable repository signals such as Python, Rust, TypeScript, content, documentation, or infrastructure files. Domain-specific context comes from the target repository's objectives and existing guidance, so the server can create useful loops without carrying assumptions from another project or machine.
 
 ## Use With GitHub Copilot
 

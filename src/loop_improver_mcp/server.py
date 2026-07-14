@@ -1,11 +1,20 @@
-# Last modified: 2026-07-09T11:56:00.989Z
+# Last modified: 2026-07-14T00:00:00.000Z
+
+"""Expose loop analysis, installation, and insight recording as MCP tools.
+
+This module is the transport layer. Each tool delegates repository work to
+``loop_core`` so the MCP entry points stay small and easy to audit.
+"""
 
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from .loop_core import analyze_github_loop, apply_github_loop, write_current_insight
-
+from .loop_core import (
+    analyze_github_loop,
+    apply_github_loop,
+    write_current_insight,
+)
 
 mcp = FastMCP("loop-improver", json_response=True)
 
@@ -43,6 +52,8 @@ def record_loop_insight(
 
 
 def main() -> None:
+    """Start the MCP server over standard input and output for editor clients."""
+
     mcp.run(transport="stdio")
 
 

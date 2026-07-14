@@ -1,11 +1,15 @@
-# Last modified: 2026-07-09T21:10:00.420Z
+# Last modified: 2026-07-14T00:00:00.000Z
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
 
-from loop_improver_mcp.loop_core import analyze_github_loop, apply_github_loop, write_current_insight
+from loop_improver_mcp.loop_core import (
+    analyze_github_loop,
+    apply_github_loop,
+    write_current_insight,
+)
 
 
 def test_analyze_reports_missing_loop_pieces(tmp_path: Path) -> None:
@@ -73,19 +77,19 @@ def test_analyze_infers_rust_specialist(tmp_path: Path) -> None:
     assert "has-brand-heading" in summary["readmeSignals"]
 
 
-def test_analyze_infers_python_mcp_specialist(tmp_path: Path) -> None:
+def test_analyze_infers_portable_python_specialist(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("# Python MCP\n\nA small MCP capability for testing.\n", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "python-mcp"\nversion = "0.1.0"\n', encoding="utf-8")
 
     summary = analyze_github_loop(str(tmp_path))
 
     assert summary["primaryKind"] == "python"
-    assert summary["suggestedSpecialist"] == "Python MCP hygiene specialist"
+    assert summary["suggestedSpecialist"] == "Python code quality specialist"
     assert "profile-python" in summary["signals"]
     assert any("detected python profile" in expectation for expectation in summary["outcomeExpectations"][".github/agents/repo-specialist-agent.agent.md"])
 
 
-def test_analyze_infers_security_demo_specialist(tmp_path: Path) -> None:
+def test_analyze_uses_portable_infrastructure_signals(tmp_path: Path) -> None:
     scout = tmp_path / "scout"
     infra = tmp_path / "infra"
     scout.mkdir()
@@ -98,12 +102,12 @@ def test_analyze_infers_security_demo_specialist(tmp_path: Path) -> None:
 
     summary = analyze_github_loop(str(tmp_path))
 
-    assert summary["primaryKind"] == "security-demo"
-    assert summary["suggestedSpecialist"] == "Security demo infrastructure specialist"
-    assert "profile-security-demo" in summary["signals"]
+    assert summary["primaryKind"] == "bicep"
+    assert summary["suggestedSpecialist"] == "Infrastructure validation specialist"
+    assert "profile-bicep" in summary["signals"]
 
 
-def test_analyze_infers_teams_live_before_typescript_fallback(tmp_path: Path) -> None:
+def test_analyze_uses_portable_language_signals_for_product_repos(tmp_path: Path) -> None:
     docs = tmp_path / "docs"
     src = tmp_path / "src" / "channel-core"
     docs.mkdir()
@@ -120,12 +124,12 @@ def test_analyze_infers_teams_live_before_typescript_fallback(tmp_path: Path) ->
 
     summary = analyze_github_loop(str(tmp_path))
 
-    assert summary["primaryKind"] == "teams-live"
-    assert summary["suggestedSpecialist"] == "Teams Live shim agent"
-    assert "profile-teams-live" in summary["signals"]
+    assert summary["primaryKind"] == "typescript"
+    assert summary["suggestedSpecialist"] == "TypeScript product hygiene specialist"
+    assert "profile-typescript" in summary["signals"]
 
 
-def test_analyze_honors_teams_live_objectives_profile_override(tmp_path: Path) -> None:
+def test_analyze_keeps_product_context_in_objectives_without_hardcoded_profiles(tmp_path: Path) -> None:
     github = tmp_path / ".github"
     github.mkdir()
     (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
@@ -139,9 +143,9 @@ def test_analyze_honors_teams_live_objectives_profile_override(tmp_path: Path) -
 
     summary = analyze_github_loop(str(tmp_path))
 
-    assert summary["primaryKind"] == "teams-live"
-    assert summary["suggestedSpecialist"] == "Teams Live shim agent"
-    assert "profile-from-objectives" in summary["signals"]
+    assert summary["primaryKind"] == "typescript"
+    assert summary["suggestedSpecialist"] == "TypeScript product hygiene specialist"
+    assert "profile-from-objectives" not in summary["signals"]
 
 
 def test_apply_preserves_existing_instructions_and_adds_managed_files(tmp_path: Path) -> None:
@@ -155,6 +159,41 @@ def test_apply_preserves_existing_instructions_and_adds_managed_files(tmp_path: 
     assert instructions.startswith("# Existing rules")
     assert "Loop Architecture Contract" in instructions
     assert ".github/agents/repo-specialist-agent.agent.md" in result["changed"]
+
+
+def test_apply_only_replaces_managed_marker_on_its_own_line(tmp_path: Path) -> None:
+    github = tmp_path / ".github"
+    github.mkdir()
+    inline_rule = "Only replace blocks marked `<!-- Managed by loop-improver-mcp -->`."
+    (github / "copilot-instructions.md").write_text(
+        f"# Existing rules\n\n{inline_rule}\n\n"
+        "<!-- Managed by loop-improver-mcp -->\n\n"
+        "## Old managed content\n",
+        encoding="utf-8",
+    )
+
+    apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+    instructions = (github / "copilot-instructions.md").read_text(encoding="utf-8")
+
+    assert inline_rule in instructions
+    assert "Old managed content" not in instructions
+    assert instructions.count("<!-- Managed by loop-improver-mcp -->") == 2
+
+
+def test_analyze_reports_duplicate_loop_contracts(tmp_path: Path) -> None:
+    github = tmp_path / ".github"
+    github.mkdir()
+    (github / "copilot-instructions.md").write_text(
+        "# Rules\n\n## Loop Architecture Contract\n\nOld\n\n"
+        "<!-- Managed by loop-improver-mcp -->\n\n"
+        "## Loop Architecture Contract\n\nCurrent\n",
+        encoding="utf-8",
+    )
+
+    summary = analyze_github_loop(str(tmp_path))
+
+    assert "duplicate-loop-contract" in summary["copilotSignals"]
+    assert "Copilot hygiene: should contain exactly one Loop Architecture Contract" in summary["missing"]
 
 
 def test_apply_does_not_overwrite_unmarked_existing_prompt(tmp_path: Path) -> None:
@@ -229,7 +268,7 @@ def test_apply_refreshes_managed_objective_rubric_and_preserves_repo_sections(tm
 
     assert "# Custom Objectives" in objectives
     assert "Detected profile: python" in objectives
-    assert "Suggested specialist: Python MCP hygiene specialist" in objectives
+    assert "Suggested specialist: Python code quality specialist" in objectives
     assert "1. Preserve this repo-specific outcome." in objectives
     assert "- custom-agent: preserve this mapping." in objectives
     assert "## Outcome Expectations" in objectives
@@ -251,9 +290,55 @@ def test_generated_guidance_uses_modern_contract(tmp_path: Path) -> None:
     assert "verified improvements" in objectives
     assert "Last modified hygiene" in objectives
     assert "establish a concise session title, direction, and agreed endpoint" in instructions
+    assert "Completed loops record durable notes" in instructions
+    assert "commit verified changes, and push when authorized" in instructions
+    assert "Blocked loops leave an explicit handoff" in instructions
 
     specialist = (tmp_path / ".github" / "agents" / "repo-specialist-agent.agent.md").read_text(encoding="utf-8")
     assert "Use the opening exchange to establish a concise session title, direction, and agreed endpoint." in specialist
+    assert "Prefer intention-revealing names, small single-purpose units, and direct control flow." in specialist
+    assert "Comment only when rationale, invariants, constraints, or non-obvious tradeoffs" in specialist
+    assert "Remove comments that narrate the code, repeat names, or no longer match behavior." in specialist
+    assert "Treat a need for explanatory prose as a signal to simplify the code first." in specialist
+    assert "Review source comments in every changed code file" in specialist
+    assert "Add or update focused comments where the code cannot preserve purpose" in specialist
+    assert "Derive domain-specific loops from this repository's objectives" in specialist
+    assert "Give each source file a brief header description" in specialist
+    assert "Give functions and classes concise docstrings" in specialist
+    assert "Write for a reader who is still learning the language or repository" in specialist
+    assert "Search for existing code before adding a new helper" in specialist
+    assert "Check references to changed and nearby symbols" in specialist
+    assert "Run the repository's dead-code tooling" in specialist
+    assert "Remove unused functions, classes, imports, tests, and comments" in specialist
+    assert "Write durable notes before closing the loop" in specialist
+    assert "Review the final diff and working tree" in specialist
+    assert "Commit only the loop's intended changes with a meaningful message" in specialist
+    assert "Push the commit when the user has authorized it" in specialist
+    assert "leave an explicit handoff" in specialist
+
+
+def test_repository_loop_prompt_requires_verified_git_closeout() -> None:
+    prompt = Path(".github/prompts/improvement-loop.prompt.md").read_text(encoding="utf-8")
+
+    assert "Record durable notes" in prompt
+    assert "Review the final diff and working tree" in prompt
+    assert "Commit the verified loop changes with a meaningful message" in prompt
+    assert "Push the commit to the current branch" in prompt
+
+
+def test_generated_guidance_contains_no_product_specific_profiles(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+
+    apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+
+    generated = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (tmp_path / ".github").rglob("*")
+        if path.is_file()
+    )
+    assert "Scout" not in generated
+    assert "Teams Live" not in generated
+    assert "Security demo" not in generated
 
 
 def test_outcome_expectations_follow_detected_profile(tmp_path: Path) -> None:

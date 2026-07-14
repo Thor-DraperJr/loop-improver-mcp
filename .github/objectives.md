@@ -1,4 +1,4 @@
-<!-- Last modified: 2026-07-09T13:40:00.146Z -->
+<!-- Last modified: 2026-07-14T22:58:57.752Z -->
 <!-- Managed by loop-improver-mcp -->
 
 # Repository Objectives
@@ -8,7 +8,7 @@ Use this file for the repo's aspirational objectives: what the repo is trying to
 ## Working Profile
 
 - Detected profile: python
-- Suggested specialist: Python MCP hygiene specialist
+- Suggested specialist: Python code quality specialist
 
 ## Aspirational Objectives
 
@@ -26,12 +26,30 @@ Use this file for the repo's aspirational objectives: what the repo is trying to
 
 ## Outcome Expectations
 
-- `README.md`: standalone capability page with repo purpose, audience, tool surface, and durable entry points.
-- `.github/copilot-instructions.md`: durable repo rules, validation expectations, safety boundaries, and canonical file ownership.
-- `.github/objectives.md`: current outcomes, active loop map, and evidence that proves improvement.
-- Last modified hygiene: missing timestamps and files older than 30 days are surfaced as review candidates that guide objective and folder selection, not automatic failures.
-- `.github/agents/`: specialist guidance only when recurring domain work needs its own instruction surface.
-- `.github/insights/`: one current insight per MCP or specialist surface with verified improvements, prune candidates, reusable learnings, and self-improvement notes.
+- README.md
+  - Names what the repository is and who it serves in the first screen.
+  - Explains capabilities and outcomes without carrying operational runbooks or agent rules.
+  - Points to deeper docs only when those docs are durable entry points.
+- .github/copilot-instructions.md
+  - Contains durable rules, validation expectations, safety boundaries, and canonical file ownership.
+  - Prunes legacy session-management, tool-ordering, setup, and prompt-command boilerplate.
+  - Separates broad repo rules from specialist-agent instructions and temporary troubleshooting notes.
+- .github/objectives.md
+  - States the repo-specific outcomes that should improve over time.
+  - Maps each active loop or specialist surface to the outcomes it serves.
+  - Defines evidence or verification that shows an improvement actually landed.
+- Last modified hygiene
+  - Surfaces text files without a Last modified timestamp as attention candidates.
+  - Surfaces text files with timestamps older than the configured stale threshold, defaulting to 30 days.
+  - Uses timestamp age to help the session choose one objective and focus folder, not as proof that a file is wrong.
+- .github/agents/repo-specialist-agent.agent.md
+  - Focuses on recurring domain work for the detected python profile.
+  - Uses this mission as its default lens: Keep the Python code small, typed, tested, readable, and aligned to the repo objectives.
+  - Reads objectives and latest insights before changing files, then records reusable learnings after focused passes.
+- .github/insights/
+  - Keeps one current insight per MCP or specialist surface instead of growing forever.
+  - Records verified improvements, prune candidates, reusable learnings, and self-improvement notes.
+  - Turns one-off discoveries into better future repo guidance instead of scattered chat memory.
 
 ## Verification
 
