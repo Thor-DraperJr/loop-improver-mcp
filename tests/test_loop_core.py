@@ -21,6 +21,15 @@ def test_analyze_reports_missing_loop_pieces(tmp_path: Path) -> None:
     assert ".github/copilot-instructions.md" in summary["outcomeExpectations"]
 
 
+def test_analyze_tolerates_non_utf8_canonical_files(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_bytes(b"\xff\xfe\x00")
+
+    summary = analyze_github_loop(str(tmp_path))
+
+    assert "README.md" in summary["missing"]
+    assert "no-readme" in summary["signals"]
+
+
 def test_analyze_surfaces_missing_and_stale_last_modified_files(tmp_path: Path) -> None:
     (tmp_path / "fresh.md").write_text("<!-- Last modified: 2026-07-01T00:00:00.000Z -->\n# Fresh\n", encoding="utf-8")
     (tmp_path / "stale.md").write_text("<!-- Last modified: 2026-05-01T00:00:00.000Z -->\n# Stale\n", encoding="utf-8")
@@ -241,6 +250,10 @@ def test_generated_guidance_uses_modern_contract(tmp_path: Path) -> None:
     assert "operational runbooks or agent rules" in objectives
     assert "verified improvements" in objectives
     assert "Last modified hygiene" in objectives
+    assert "establish a concise session title, direction, and agreed endpoint" in instructions
+
+    specialist = (tmp_path / ".github" / "agents" / "repo-specialist-agent.agent.md").read_text(encoding="utf-8")
+    assert "Use the opening exchange to establish a concise session title, direction, and agreed endpoint." in specialist
 
 
 def test_outcome_expectations_follow_detected_profile(tmp_path: Path) -> None:

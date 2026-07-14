@@ -16,6 +16,7 @@ This repo is a Python MCP server that helps older repositories modernize improve
 - Keep the MCP tool surface deterministic. The server inspects structure, infers simple repo profiles, generates managed loop files, and overwrites current insights; it should not ask a model to invent repo strategy.
 - README hygiene comes first: the README should be a clear human-facing capability page, not the operational home for agent rules.
 - Copilot instructions hold durable ground rules and validation, while `.github/objectives.md` holds aspirational objectives mapped to active loops and specialist guidance.
+- Use the opening exchange of every session to establish a concise title, direction, and agreed endpoint. Once the endpoint is clear, use the applicable coding-agent loops to carry the work through completion.
 - Preserve user-authored repo guidance. Only replace blocks marked `<!-- Managed by loop-improver-mcp -->`.
 
 ## Loop Architecture Contract

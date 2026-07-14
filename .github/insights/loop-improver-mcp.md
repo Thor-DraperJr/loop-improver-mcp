@@ -1,12 +1,12 @@
-<!-- Last modified: 2026-07-09T21:11:50.072Z -->
+<!-- Last modified: 2026-07-14T21:07:07.709Z -->
 <!-- Managed by loop-improver-mcp -->
 
 # loop-improver-mcp insight
 
-## 2026-07-09T21:11:50.072Z - Prefer objectives and Teams Live intent over TypeScript fallback
+## 2026-07-14T21:07:07.709Z - Harden generated session contracts and legacy repository analysis
 **Mission:** loop architecture improvement
-**Improved:** Profile inference now honors Teams Live objectives/content before language fallback, preventing fresh Teams Live shim repos from being routed to TypeScript product hygiene; verified with python -m pytest tests/test_loop_core.py and live compare_loops after global uv reinstall.
-**Prune candidates:** cached uv tool installs can preserve old local-package wheels when version stays unchanged; use --reinstall --no-cache for global republish after source edits.
-**Reusable learnings:** Repo objectives can carry authoritative Working Profile intent, so analyzer profile inference should consult them before implementation-language signals.
-**Agent self-improvement:** Global publish validation should inspect the installed uv tool environment and then call the MCP tool surface, not rely on uv install success alone.
+**Improved:** Generated Copilot contracts and repo-specialist agents now require a concise session title, direction, and agreed endpoint before starting a loop. Repository analysis now tolerates unreadable non-UTF-8 canonical files by returning normal hygiene findings instead of failing the MCP call; verified with focused regression tests and the full pytest suite.
+**Prune candidates:** none
+**Reusable learnings:** Durable instructions must be propagated through generated templates, and repository inspection should treat unreadable legacy text as a finding rather than a tool failure.
+**Agent self-improvement:** Trace policy changes through emitted templates and exercise analysis against malformed legacy repository inputs.
 

@@ -173,7 +173,7 @@ def _list_repo_files(root: Path) -> list[str]:
 
 
 def _read_optional(path: Path) -> str:
-    return path.read_text(encoding="utf-8") if path.exists() else ""
+    return _read_text_optional(path) or ""
 
 
 def _read_text_optional(path: Path) -> str | None:
@@ -490,6 +490,7 @@ Canonical files have separate jobs:
 ### Ground Rules
 
 - Start with README and Copilot hygiene before adding new agents.
+- Use the opening exchange to establish a concise session title, direction, and agreed endpoint before starting a loop.
 - Identify objectives from the repo's actual files, tests, docs, and recurring work.
 - Let this MCP server own loop architecture; deploy repo agents only for recurring domain work.
 - Each agent must end passes by recording insights and applying obvious agent/doc improvements directly.
@@ -569,12 +570,13 @@ You are the repo-specific improvement agent. Read .github/objectives.md and the 
 
 ## Loop
 
-1. Identify one repo-specific improvement tied to an objective.
-2. Review analyze_github_loop attention guidance and choose one objective plus one focus folder or file cluster for the session.
-3. Read the owning files and nearest validation surface.
-4. Prune dead code, stale docs, duplicated guidance, or unnecessary verbosity when that is the smallest useful improvement.
-5. Run the cheapest relevant executable check.
-6. Overwrite the current insight in .github/insights/repo-specialist-agent.md.
+1. Use the opening exchange to establish a concise session title, direction, and agreed endpoint.
+2. Identify one repo-specific improvement tied to an objective.
+3. Review analyze_github_loop attention guidance and choose one objective plus one focus folder or file cluster for the session.
+4. Read the owning files and nearest validation surface.
+5. Prune dead code, stale docs, duplicated guidance, or unnecessary verbosity when that is the smallest useful improvement.
+6. Run the cheapest relevant executable check.
+7. Overwrite the current insight in .github/insights/repo-specialist-agent.md.
 
 If the repo profile is wrong, update .github/objectives.md and this agent before doing specialized work.
 """
