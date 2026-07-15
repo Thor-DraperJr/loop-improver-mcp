@@ -8,6 +8,7 @@ This module is the transport layer. Each tool delegates repository work to
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -65,8 +66,14 @@ def _server_info() -> dict[str, str]:
     return {"version": __version__, "sourcePath": str(Path(__file__).resolve())}
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Start the MCP server over standard input and output for editor clients."""
+
+    parser = argparse.ArgumentParser(
+        description="Start the loop-improver MCP server over standard input and output."
+    )
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.parse_args(argv)
 
     mcp.run(transport="stdio")
 
