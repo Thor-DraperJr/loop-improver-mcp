@@ -2,7 +2,7 @@
 # Last modified: 2026-07-14T00:00:00.000Z
 
 name = "loop-improver-mcp"
-version = "0.1.0"
+version = "0.2.5"
 description = "MCP server that creates repo-specific improvement loops from README, Copilot instructions, objectives, agents, and insights."
 requires-python = ">=3.10"
 dependencies = [

@@ -4,15 +4,17 @@
 
 MCP server for modernizing agent guidance across repositories.
 
-`loop-improver-mcp` inspects an older repo, identifies stale or missing collaboration surfaces, and installs a small managed foundation for better Copilot work: durable instructions, objectives, specialist guidance, and current insight files.
+`loop-improver-mcp` inspects an older repo, identifies stale or missing collaboration surfaces, and installs a small managed foundation for better Copilot work: durable instructions, one repository-wide mission and evidence model, specialist guidance, and current insight files.
 
 It handles repos that already have mature `.github` files and repos that have no `.github` folder at all. The MCP call owns the architecture pass; generated agents are only for recurring domain work that needs a dedicated instruction surface.
 
 ## Tools
 
 - `compare_loops` inspects README, `.github/copilot-instructions.md`, `.github/objectives.md`, specialist agents, insights, and inferred repo profile.
-- `improve_loop` creates missing `.github` structure, installs or refreshes objectives, a repo-specialist agent, and current insight files, and preserves user-authored instructions outside managed blocks.
+- `improve_loop` creates missing `.github` structure, installs or refreshes objectives, specialist guidance, and current insight files. `objectives.md` defines the shared repository mission; each specialist contributes its own evidence and current insight without receiving a separate objective. It preserves agent missions while adding a managed improvement loop and matching current insight ledger to each user-owned specialist. It also preserves durable user-authored instructions while consolidating reported command summaries when equivalent canonical prompts already exist.
 - `record_loop_insight` overwrites the current architecture learning in `.github/insights/loop-improver-mcp.md`.
+
+Every tool response includes `serverInfo.version` and `serverInfo.sourcePath` so clients can identify stale installations or confirm that a workspace checkout is loaded.
 
 ## Outcome Rubric
 

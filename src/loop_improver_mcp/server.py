@@ -8,8 +8,11 @@ This module is the transport layer. Each tool delegates repository work to
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from mcp.server.fastmcp import FastMCP
 
+from . import __version__
 from .loop_core import (
     analyze_github_loop,
     apply_github_loop,
@@ -22,13 +25,17 @@ mcp = FastMCP("loop-improver", json_response=True)
 @mcp.tool()
 def compare_loops(repo_paths: list[str]) -> dict:
     """Compare repositories against README/Copilot/objectives/agents/insights loop architecture."""
-    return {"repositories": [analyze_github_loop(repo_path) for repo_path in repo_paths]}
+    return {
+        "serverInfo": _server_info(),
+        "repositories": [analyze_github_loop(repo_path) for repo_path in repo_paths],
+    }
 
 
 @mcp.tool()
 def improve_loop(repo_path: str, overwrite_managed_files: bool = True) -> dict:
     """Install or refresh the foundational loop architecture in a target repository."""
-    return apply_github_loop(repo_path, overwrite_managed_files=overwrite_managed_files)
+    result = apply_github_loop(repo_path, overwrite_managed_files=overwrite_managed_files)
+    return {"serverInfo": _server_info(), **result}
 
 
 @mcp.tool()
@@ -41,7 +48,7 @@ def record_loop_insight(
     agent_self_improvement: str | None = None,
 ) -> dict:
     """Write the current architecture insight to .github/insights/loop-improver-mcp.md."""
-    return write_current_insight(
+    result = write_current_insight(
         repo_path=repo_path,
         title=title,
         improved=improved,
@@ -49,6 +56,13 @@ def record_loop_insight(
         reusable_learnings=reusable_learnings,
         agent_self_improvement=agent_self_improvement,
     )
+    return {"serverInfo": _server_info(), **result}
+
+
+def _server_info() -> dict[str, str]:
+    """Identify the package version and source file loaded by this MCP process."""
+
+    return {"version": __version__, "sourcePath": str(Path(__file__).resolve())}
 
 
 def main() -> None:

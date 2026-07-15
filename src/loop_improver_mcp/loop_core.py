@@ -9,6 +9,7 @@ selection, safe updates to managed content, and rendering the generated Markdown
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,7 @@ RepoKind = Literal[
 ]
 
 MANAGED_MARKER = "<!-- Managed by loop-improver-mcp -->"
+AGENT_LOOP_MARKER = "<!-- Managed by loop-improver-mcp: agent loop -->"
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,12 @@ def analyze_github_loop(repo_path: str, stale_after_days: int = 30, now: datetim
     timestamp_hygiene = _analyze_file_timestamps(repo, repo_files, stale_after_days, now or datetime.now(timezone.utc))
 
     has_specialist = "agents/repo-specialist-agent.agent.md" in github_files
+    existing_agent_names = _list_existing_agent_names(github)
+    loop_enabled_agents = _list_loop_enabled_agents(github, existing_agent_names)
+    agents_missing_loops = sorted(set(existing_agent_names) - set(loop_enabled_agents))
+    existing_specialists = _find_existing_specialists(github, profile)
+    specialist_needed = not existing_specialists
+    has_specialist_coverage = has_specialist or not specialist_needed
     has_insights = any(file.startswith("insights/") for file in github_files)
 
     signals = [
@@ -86,6 +94,8 @@ def analyze_github_loop(repo_path: str, stale_after_days: int = 30, now: datetim
         "copilot-instructions" if copilot else "no-copilot-instructions",
         "objectives" if objectives else "no-objectives",
         "repo-specialist-agent" if has_specialist else "no-repo-specialist-agent",
+        "existing-specialist-coverage" if existing_specialists else "no-existing-specialist-coverage",
+        "existing-agent-loops" if not agents_missing_loops else "existing-agents-missing-loops",
         "agents" if any(file.startswith("agents/") for file in github_files) else "no-agents",
         "insights" if has_insights else "no-insights",
         "last-modified-ground-rule" if re.search(r"last modified", copilot, re.I) else "no-last-modified-ground-rule",
@@ -98,19 +108,21 @@ def analyze_github_loop(repo_path: str, stale_after_days: int = 30, now: datetim
         "" if readme else "README.md",
         "" if copilot else ".github/copilot-instructions.md",
         "" if objectives else ".github/objectives.md",
-        "" if has_specialist else ".github/agents/repo-specialist-agent.agent.md",
+        "" if has_specialist_coverage else ".github/agents/repo-specialist-agent.agent.md",
         "" if has_insights else ".github/insights/README.md",
+        *[f"Existing agent missing improvement loop: .github/agents/{name}.agent.md" for name in agents_missing_loops],
         *[f"README hygiene: {finding}" for finding in readme_hygiene.findings],
         *[f"Copilot hygiene: {finding}" for finding in copilot_hygiene.findings],
         *[f"Objectives hygiene: {finding}" for finding in objectives_hygiene.findings],
     ]
     missing = [item for item in missing if item]
 
-    recommendation = (
-        f"Run improve_loop to install the modernization foundation, then tune {profile.suggested_specialist} around the repo's objectives."
-        if missing
-        else f"Modernization foundation is present; use {profile.suggested_specialist} for domain work and record insights after each pass."
-    )
+    if missing:
+        recommendation = "Run improve_loop to install or refresh the modernization foundation, then resolve the remaining hygiene findings."
+    elif existing_specialists:
+        recommendation = f"Modernization foundation is present; use existing specialist coverage ({', '.join(existing_specialists)}) and record insights after each pass."
+    else:
+        recommendation = f"Modernization foundation is present; use {profile.suggested_specialist} for domain work and record insights after each pass."
 
     return {
         "repoPath": str(repo),
@@ -125,18 +137,23 @@ def analyze_github_loop(repo_path: str, stale_after_days: int = 30, now: datetim
             "sessionGuidance": _attention_session_guidance(timestamp_hygiene),
         },
         "recommendation": recommendation,
-        "outcomeExpectations": _outcome_expectations(profile),
+        "outcomeExpectations": _outcome_expectations(profile, specialist_needed),
         "readmeSignals": readme_hygiene.signals,
         "copilotSignals": copilot_hygiene.signals,
         "objectivesSignals": objectives_hygiene.signals,
         "primaryKind": profile.primary_kind,
         "suggestedSpecialist": profile.suggested_specialist,
         "specialistMission": profile.specialist_mission,
+        "specialistNeeded": specialist_needed,
+        "existingSpecialists": existing_specialists,
+        "existingAgents": existing_agent_names,
+        "loopEnabledAgents": loop_enabled_agents,
+        "validationCommands": _infer_validation_commands(repo, repo_files),
     }
 
 
 def apply_github_loop(repo_path: str, overwrite_managed_files: bool = True) -> dict[str, Any]:
-    """Create or refresh managed loop files while preserving user-owned guidance."""
+    """Create or refresh loop files while preserving durable user-owned guidance."""
 
     repo = Path(repo_path)
     before = analyze_github_loop(str(repo))
@@ -148,18 +165,37 @@ def apply_github_loop(repo_path: str, overwrite_managed_files: bool = True) -> d
     changed: list[str] = []
     copilot_path = github / "copilot-instructions.md"
     existing_copilot = _read_optional(copilot_path)
-    next_copilot = _merge_managed_block(existing_copilot, _copilot_managed_block(timestamp))
+    improved_copilot, instruction_improvements = (
+        _improve_copilot_instructions(existing_copilot, github) if overwrite_managed_files else (existing_copilot, [])
+    )
+    next_copilot = _merge_managed_block(improved_copilot, _copilot_managed_block(timestamp))
+    if next_copilot != existing_copilot:
+        next_copilot = _set_last_modified_header(next_copilot, timestamp)
+    next_copilot = _preserve_timestamp_only_change(existing_copilot, next_copilot)
     if next_copilot != existing_copilot:
         copilot_path.write_text(next_copilot, encoding="utf-8")
         changed.append(".github/copilot-instructions.md")
 
     _write_objectives(github / "objectives.md", _objectives_template(timestamp, before), overwrite_managed_files, changed)
-    _write_managed(github / "agents" / "repo-specialist-agent.agent.md", _specialist_agent_template(timestamp, before), overwrite_managed_files, changed)
+    specialist_path = github / "agents" / "repo-specialist-agent.agent.md"
+    specialist_insight_path = github / "insights" / "repo-specialist-agent.md"
+    if before["specialistNeeded"]:
+        _write_managed(specialist_path, _specialist_agent_template(timestamp, before), overwrite_managed_files, changed)
+        _write_managed(specialist_insight_path, _insight_ledger_template(timestamp, "repo-specialist-agent"), False, changed)
+    else:
+        _remove_managed(specialist_path, changed)
+        _remove_managed(specialist_insight_path, changed)
+    agent_improvements = _apply_existing_agent_loops(github, timestamp, overwrite_managed_files, changed)
     _write_managed(github / "insights" / "README.md", _insights_readme_template(timestamp), overwrite_managed_files, changed)
     _write_managed(github / "insights" / "loop-improver-mcp.md", _insight_ledger_template(timestamp, "loop-improver-mcp"), False, changed)
-    _write_managed(github / "insights" / "repo-specialist-agent.md", _insight_ledger_template(timestamp, "repo-specialist-agent"), False, changed)
 
-    return {"before": before, "after": analyze_github_loop(str(repo)), "changed": changed}
+    return {
+        "before": before,
+        "after": analyze_github_loop(str(repo)),
+        "changed": changed,
+        "instructionImprovements": instruction_improvements,
+        "agentImprovements": agent_improvements,
+    }
 
 
 def write_current_insight(
@@ -263,15 +299,15 @@ def _attention_session_guidance(timestamp_hygiene: TimestampHygiene) -> dict[str
     attention_files = [*missing, *stale]
     if not attention_files:
         return {
-            "instruction": "No timestamp attention items surfaced. Choose an objective from .github/objectives.md based on current repo work.",
+            "instruction": "No timestamp attention items surfaced. Choose a concrete focus that advances the shared repository mission in .github/objectives.md.",
             "objectiveCandidates": [],
             "focusFolders": [],
         }
     return {
-        "instruction": "Use these attention items to choose one objective for the session, then focus on the highest-signal folder or file cluster before editing.",
+        "instruction": "Use these attention items to choose one concrete focus that advances the shared repository mission, then work in the highest-signal folder or file cluster.",
         "objectiveCandidates": [
             "Review files missing Last modified timestamps and decide whether they are durable enough to keep, update, move, or prune.",
-            "Review stale timestamp files and refresh only the files whose content still serves an active objective.",
+            "Review stale timestamp files and refresh only the files whose content still serves the shared repository mission.",
         ],
         "focusFolders": _rank_focus_folders(attention_files),
     }
@@ -291,11 +327,15 @@ def _rank_focus_folders(files: list[str]) -> list[dict[str, int | str]]:
 
 
 def _skip_timestamp_scan(file: str) -> bool:
-    """Return whether timestamp checks would be meaningless for a file or cache path."""
+    """Limit timestamp attention to durable repository and collaboration guidance."""
 
-    ignored_prefixes = (".git/", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/")
-    ignored_suffixes = (".json", ".lock", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".zip", ".gz", ".pdf")
-    return file.startswith(ignored_prefixes) or file.endswith(ignored_suffixes)
+    if "/" not in file and file.endswith(".md"):
+        return False
+    if file.startswith("docs/") and file.endswith(".md"):
+        return False
+    collaboration_prefixes = (".github/agents/", ".github/instructions/", ".github/prompts/")
+    canonical_files = (".github/copilot-instructions.md", ".github/objectives.md")
+    return not (file in canonical_files or (file.startswith(collaboration_prefixes) and file.endswith(".md")))
 
 
 def _extract_last_modified(content: str) -> datetime | None:
@@ -325,16 +365,19 @@ def _analyze_readme(content: str) -> Hygiene:
 
     if not content.strip():
         return Hygiene(["missing"], ["missing human capability overview"])
+    explains_capability = bool(
+        re.search(r"what|capabilit|purpose|why|use|\bsite\b|\bblog\b|working resume|place to share|actual app", content, re.I)
+    )
     signals = [
         "has-brand-heading" if re.search(r"^#\s+\S", content, re.M) else "no-brand-heading",
-        "explains-capability" if re.search(r"what|capability|purpose|why|use", content, re.I) else "thin-capability-story",
+        "explains-capability" if explains_capability else "thin-capability-story",
         "has-usage-entry" if re.search(r"quickstart|setup|install|usage", content, re.I) else "no-usage-entry",
         "concise" if len(content) <= 5000 else "too-long-for-human-orientation",
         "mentions-ai-surface" if re.search(r"copilot|agent|mcp|prompt", content, re.I) else "human-first",
     ]
     findings = [
         "" if re.search(r"^#\s+\S", content, re.M) else "needs a clear repo brand heading",
-        "" if re.search(r"what|capability|purpose|why|use", content, re.I) else "should explain the repo capability in human terms",
+        "" if explains_capability else "should explain the repo capability in human terms",
         "" if len(content) <= 5000 else "may be carrying too much operational detail for a human README",
     ]
     return Hygiene(signals, [finding for finding in findings if finding])
@@ -393,7 +436,7 @@ def _infer_repo_profile(files: list[str]) -> RepoProfile:
         return RepoProfile("rust", ["profile-rust"], "Rust hygiene specialist", "Prune dead Rust code, reduce unnecessary verbosity, and keep tests or CLI behavior aligned with the repo objectives.")
     if "pyproject.toml" in file_set or _any_file_ends_with(files, ".py"):
         return RepoProfile("python", ["profile-python"], "Python code quality specialist", "Keep the Python code small, typed, tested, readable, and aligned to the repo objectives.")
-    if _any_path_matches(files, r"(^|/)(content|src/content|posts|blog)/") or "astro.config.mjs" in file_set:
+    if _any_path_matches(files, r"(^|/)(content|src/content|posts|blog)/") or _any_file_ends_with(files, "astro.config.mjs"):
         return RepoProfile("blog", ["profile-blog"], "Voice and editor specialist", "Improve article quality, voice consistency, publish readiness, and editorial insight loops.")
     if "package.json" in file_set or _any_file_ends_with(files, ".ts") or _any_file_ends_with(files, ".tsx"):
         return RepoProfile("typescript", ["profile-typescript"], "TypeScript product hygiene specialist", "Keep the TypeScript surface small, tested, typed, and aligned to the repo objectives.")
@@ -403,6 +446,79 @@ def _infer_repo_profile(files: list[str]) -> RepoProfile:
     if markdown_count >= max(3, len(files) / 2):
         return RepoProfile("docs", ["profile-docs"], "Documentation clarity specialist", "Keep documentation concise, human-readable, accurate, and free of duplicated operational guidance.")
     return RepoProfile("generic", ["profile-generic"], "Repository specialist", "Identify the repo's recurring work and create small verified improvement loops around it.")
+
+
+def _find_existing_specialists(github: Path, profile: RepoProfile) -> list[str]:
+    """Find user-owned agents whose identity directly covers the detected specialist mission."""
+
+    keywords: dict[RepoKind, tuple[str, ...]] = {
+        "blog": ("article", "content", "editor", "narrative", "publish", "voice"),
+        "python": ("python",),
+        "rust": ("rust",),
+        "typescript": ("typescript",),
+        "bicep": ("bicep", "infrastructure"),
+        "docs": ("documentation", "editor"),
+        "generic": (),
+    }
+    matches: list[str] = []
+    for agent_name in _list_existing_agent_names(github):
+        identity = agent_name.lower()
+        if any(keyword in identity for keyword in keywords[profile.primary_kind]):
+            matches.append(agent_name)
+    return matches
+
+
+def _list_existing_agent_names(github: Path) -> list[str]:
+    """Return user-owned agent names without the generated generic specialist."""
+
+    agents = github / "agents"
+    if not agents.exists():
+        return []
+    return [
+        path.name.removesuffix(".agent.md")
+        for path in sorted(agents.glob("*.agent.md"))
+        if path.name != "repo-specialist-agent.agent.md"
+    ]
+
+
+def _list_loop_enabled_agents(github: Path, agent_names: list[str]) -> list[str]:
+    """Return user-owned agents that already carry the managed improvement-loop suffix."""
+
+    return [
+        agent_name
+        for agent_name in agent_names
+        if AGENT_LOOP_MARKER in _read_optional(github / "agents" / f"{agent_name}.agent.md")
+    ]
+
+
+def _infer_validation_commands(repo: Path, files: list[str]) -> list[str]:
+    """Infer executable checks from project manifests without inventing unavailable scripts."""
+
+    commands: list[str] = []
+    for package_file in (file for file in files if file.endswith("package.json")):
+        try:
+            package = json.loads((repo / package_file).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        scripts = package.get("scripts", {})
+        if not isinstance(scripts, dict):
+            continue
+        parent = Path(package_file).parent.as_posix()
+        prefix = "" if parent == "." else f"cd {parent} && "
+        for script in ("test", "lint", "build"):
+            if script in scripts:
+                commands.append(f"{prefix}npm run {script}")
+    if "pyproject.toml" in files:
+        pyproject = _read_optional(repo / "pyproject.toml").lower()
+        if "pytest" in pyproject:
+            commands.append("python -m pytest")
+        if "ruff" in pyproject:
+            commands.append("python -m ruff check src tests")
+        if "vulture" in pyproject:
+            commands.append("python -m vulture")
+    if "Cargo.toml" in files:
+        commands.append("cargo test")
+    return commands
 
 
 def _any_file_ends_with(files: list[str], suffix: str) -> bool:
@@ -417,7 +533,7 @@ def _any_path_matches(files: list[str], pattern: str) -> bool:
     return any(re.search(pattern, file) for file in files)
 
 
-def _outcome_expectations(profile: RepoProfile) -> dict[str, list[str]]:
+def _outcome_expectations(profile: RepoProfile, specialist_needed: bool) -> dict[str, list[str]]:
     """Describe the expected role and quality of each generated loop surface."""
 
     return {
@@ -432,20 +548,29 @@ def _outcome_expectations(profile: RepoProfile) -> dict[str, list[str]]:
             "Separates broad repo rules from specialist-agent instructions and temporary troubleshooting notes.",
         ],
         ".github/objectives.md": [
-            "States the repo-specific outcomes that should improve over time.",
-            "Maps each active loop or specialist surface to the outcomes it serves.",
-            "Defines evidence or verification that shows an improvement actually landed.",
+            "States the shared repository mission and the outcomes that define success.",
+            "Names specialized loops that contribute evidence and learning to that mission.",
+            "Defines evidence or verification that shows the mission is advancing.",
         ],
         "Last modified hygiene": [
             "Surfaces text files without a Last modified timestamp as attention candidates.",
             "Surfaces text files with timestamps older than the configured stale threshold, defaulting to 30 days.",
-            "Uses timestamp age to help the session choose one objective and focus folder, not as proof that a file is wrong.",
+            "Uses timestamp age to help the session choose a mission-serving focus and folder, not as proof that a file is wrong.",
         ],
-        ".github/agents/repo-specialist-agent.agent.md": [
-            f"Focuses on recurring domain work for the detected {profile.primary_kind} profile.",
-            f"Uses this mission as its default lens: {profile.specialist_mission}",
-            "Reads objectives and latest insights before changing files, then records reusable learnings after focused passes.",
-        ],
+        ".github/agents/repo-specialist-agent.agent.md" if specialist_needed else "Existing specialist agents": (
+            [
+                f"Focuses on recurring domain work for the detected {profile.primary_kind} profile.",
+                f"Uses this mission as its default lens: {profile.specialist_mission}",
+                "Reads objectives and latest insights before changing files, then records reusable learnings after focused passes.",
+            ]
+            if specialist_needed
+            else [
+                f"Collectively serve the shared repository mission for the detected {profile.primary_kind} profile.",
+                "Remain user-owned while their specialized lenses contribute to the shared improvement loop.",
+                "Read their own current insight and overwrite it directly or return a ready-to-write record to their conductor.",
+                "Prevent generation of a redundant generic repo specialist.",
+            ]
+        ),
         ".github/insights/": [
             "Keeps one current insight per MCP or specialist surface instead of growing forever.",
             "Records verified improvements, prune candidates, reusable learnings, and self-improvement notes.",
@@ -459,6 +584,7 @@ def _write_managed(path: Path, content: str, overwrite_managed_files: bool, chan
 
     if path.exists():
         existing = path.read_text(encoding="utf-8")
+        content = _preserve_timestamp_only_change(existing, content)
         if existing == content:
             return
         if MANAGED_MARKER not in existing:
@@ -479,6 +605,7 @@ def _write_objectives(path: Path, content: str, overwrite_managed_files: bool, c
         if not overwrite_managed_files:
             return
         content = _merge_objectives(existing, content)
+        content = _preserve_timestamp_only_change(existing, content)
         if existing == content:
             return
     path.write_text(content, encoding="utf-8")
@@ -492,11 +619,103 @@ def _merge_objectives(existing: str, fresh: str) -> str:
     existing_title = re.search(r"^#\s+.+$", existing, re.M)
     if existing_title:
         fresh = re.sub(r"^#\s+.+$", existing_title.group(0), fresh, count=1, flags=re.M)
-    for heading in ["Aspirational Objectives", "Agent Map"]:
-        existing_section = _extract_markdown_section(existing, heading)
-        if existing_section:
-            fresh = _replace_markdown_section(fresh, heading, existing_section)
+    if existing_title and existing_title.group(0) != "# Repository Objectives":
+        for heading in ["Aspirational Objectives", "Agent Map"]:
+            existing_section = _extract_markdown_section(existing, heading)
+            if existing_section:
+                fresh = _replace_markdown_section(fresh, heading, existing_section)
     return fresh
+
+
+def _preserve_timestamp_only_change(existing: str, fresh: str) -> str:
+    """Keep existing managed content when only generated timestamps differ."""
+
+    timestamp_pattern = r"(?i)(Last (?:modified|refreshed):\s*)[0-9]{4}-[0-9]{2}-[0-9]{2}T[^\s]+"
+    normalize = lambda content: re.sub(timestamp_pattern, r"\1<TIMESTAMP>", content)
+    return existing if normalize(existing) == normalize(fresh) else fresh
+
+
+def _remove_managed(path: Path, changed: list[str]) -> None:
+    """Remove an obsolete fully managed file while preserving user-owned files."""
+
+    if not path.exists() or MANAGED_MARKER not in _read_optional(path):
+        return
+    path.unlink()
+    changed.append(_github_relative(path))
+
+
+def _apply_existing_agent_loops(
+    github: Path,
+    timestamp: str,
+    overwrite_managed_files: bool,
+    changed: list[str],
+) -> list[str]:
+    """Add managed loops and non-destructive current insight ledgers to user-owned agents."""
+
+    if not overwrite_managed_files:
+        return []
+    improvements: list[str] = []
+    for agent_name in _list_existing_agent_names(github):
+        agent_path = github / "agents" / f"{agent_name}.agent.md"
+        existing = _read_optional(agent_path)
+        updated = _merge_agent_loop(
+            existing,
+            _existing_agent_loop_template(timestamp, agent_name, _agent_can_write(existing)),
+        )
+        updated = _preserve_timestamp_only_change(existing, updated)
+        if updated != existing:
+            agent_path.write_text(updated, encoding="utf-8")
+            changed.append(_github_relative(agent_path))
+            improvements.append(f"Added managed improvement loop to .github/agents/{agent_name}.agent.md.")
+        _write_managed(
+            github / "insights" / f"{agent_name}.md",
+            _insight_ledger_template(timestamp, agent_name),
+            False,
+            changed,
+        )
+    return improvements
+
+
+def _agent_can_write(content: str) -> bool:
+    """Return whether the agent's declared tool list permits it to write its own insight file."""
+
+    tools = re.search(r"^tools:\s*\[(?P<tools>[^]]*)\]", content, re.M | re.I)
+    if not tools:
+        return False
+    declared_tools = {tool.strip().strip("'\"").lower() for tool in tools.group("tools").split(",")}
+    return bool({"edit", "editfiles", "write", "runcommands"} & declared_tools)
+
+
+def _merge_agent_loop(existing: str, loop: str) -> str:
+    """Replace an existing managed agent-loop suffix or append one after user-owned guidance."""
+
+    managed_suffix = rf"(?m)^[ \t]*{re.escape(AGENT_LOOP_MARKER)}[ \t]*(?:\r?\n|$)[\s\S]*\Z"
+    if re.search(managed_suffix, existing):
+        return re.sub(managed_suffix, lambda _: loop, existing)
+    return f"{existing.rstrip()}\n\n{loop}"
+
+
+def _existing_agent_loop_template(timestamp: str, agent_name: str, can_write: bool) -> str:
+    """Render a small repeatable loop that preserves an existing agent's stated mission."""
+
+    insight_path = f".github/insights/{agent_name}.md"
+    insight_action = (
+        f"Overwrite `{insight_path}` with the current verified learning before finishing."
+        if can_write
+        else f"Return a ready-to-write current insight record for `{insight_path}` so the conductor can overwrite it."
+    )
+    return f"""{AGENT_LOOP_MARKER}
+
+## Improvement Loop
+
+Last refreshed: {timestamp}
+
+1. Read the shared repository mission in `.github/objectives.md` and the current `{insight_path}` before starting.
+2. Apply this agent's existing mission to one concrete file, artifact, or rendered surface in service of the repository mission.
+3. State the evidence used, how the finding or change advances the repository mission, and the nearest relevant validation.
+4. {insight_action}
+5. Feed reusable learning and any needed agent or canonical-file improvement back to the conductor.
+"""
 
 
 def _extract_markdown_section(content: str, heading: str) -> str:
@@ -512,15 +731,70 @@ def _replace_markdown_section(content: str, heading: str, replacement: str) -> s
     return re.sub(rf"^## {re.escape(heading)}\n[\s\S]*?(?=^## |\Z)", f"{replacement}\n\n", content, count=1, flags=re.M)
 
 
+def _improve_copilot_instructions(content: str, github: Path) -> tuple[str, list[str]]:
+    """Consolidate command summaries whose canonical prompt or closeout rule already exists."""
+
+    canonical_prompts = {
+        path.name.removesuffix(".prompt.md")
+        for path in (github / "prompts").glob("*.prompt.md")
+    }
+    improvements: list[str] = []
+    section_pattern = re.compile(
+        rf"^## Reusable prompt commands\s*\n(?P<body>[\s\S]*?)(?=^## |^[ \t]*{re.escape(MANAGED_MARKER)}[ \t]*$|\Z)",
+        re.M,
+    )
+    command_pattern = re.compile(r"^### /(?P<slug>[a-z0-9-]+)\s*\n[\s\S]*?(?=^### /|\Z)", re.M | re.I)
+
+    def improve_section(section_match: re.Match[str]) -> str:
+        """Remove only command blocks with a verified canonical replacement."""
+
+        def improve_command(command_match: re.Match[str]) -> str:
+            """Keep unknown commands and report every deterministic removal."""
+
+            slug = command_match.group("slug").lower()
+            if slug in canonical_prompts:
+                improvements.append(
+                    f"Removed /{slug} summary because .github/prompts/{slug}.prompt.md is canonical."
+                )
+                return ""
+            if slug == "end-session":
+                improvements.append(
+                    "Removed legacy /end-session automation because Git closeout requires explicit authorization."
+                )
+                return ""
+            return command_match.group(0).rstrip() + "\n\n"
+
+        body = command_pattern.sub(improve_command, section_match.group("body")).strip()
+        return f"## Reusable prompt commands\n\n{body}\n\n" if body else ""
+
+    return section_pattern.sub(improve_section, content).rstrip() + "\n", improvements
+
+
+def _set_last_modified_header(content: str, timestamp: str) -> str:
+    """Add or refresh the canonical modification header after a substantive instruction change."""
+
+    header = f"<!-- Last modified: {timestamp} -->"
+    if re.match(r"^<!-- Last modified:.*?-->\s*", content, re.I):
+        return re.sub(r"^<!-- Last modified:.*?-->", header, content, count=1, flags=re.I)
+    return f"{header}\n\n{content.lstrip()}"
+
+
 def _merge_managed_block(existing: str, block: str) -> str:
-    """Replace the managed instruction suffix or append one to user-owned content."""
+    """Replace generated instruction suffixes, collapsing orphaned or duplicate contracts."""
 
     if not existing.strip():
         return block
-    managed_suffix = rf"(?m)^[ \t]*{re.escape(MANAGED_MARKER)}[ \t]*(?:\r?\n|$)[\s\S]*\Z"
-    if re.search(managed_suffix, existing):
-        # The marker owns only the generated suffix, preserving instructions written before it.
-        return re.sub(managed_suffix, block.rstrip(), existing)
+    generated_starts = [
+        match.start()
+        for pattern in [
+            rf"(?m)^[ \t]*{re.escape(MANAGED_MARKER)}[ \t]*$",
+            r"(?m)^## Loop Architecture Contract\r?$",
+        ]
+        if (match := re.search(pattern, existing))
+    ]
+    if generated_starts:
+        user_guidance = existing[: min(generated_starts)].rstrip()
+        return f"{user_guidance}\n\n{block}" if user_guidance else block
     return f"{existing.rstrip()}\n\n{block}"
 
 
@@ -559,16 +833,18 @@ Canonical files have separate jobs:
 
 - README.md explains the repo's brand, capability, and human reason to care.
 - .github/copilot-instructions.md holds durable agent ground rules, validation, and hygiene rules.
-- .github/objectives.md names the repo's aspirational objectives and maps them to active loops.
-- .github/agents/ contains repo-specialist agents only when they help recurring work.
+- .github/objectives.md names the shared repository mission, outcomes, and evidence model.
+- .github/agents/ contains specialists that contribute their distinct evidence and insight to the shared repository mission.
 - .github/insights/ records the current learning for each loop surface and what should improve next.
 
 ### Ground Rules
 
 - Start with README and Copilot hygiene before adding new agents.
 - Use the opening exchange to establish a concise session title, direction, and agreed endpoint before starting a loop.
-- Identify objectives from the repo's actual files, tests, docs, and recurring work.
+- Identify the shared repository mission from the repo's actual files, tests, docs, and recurring work.
 - Let this MCP server own loop architecture; deploy repo agents only for recurring domain work.
+- Let each specialist serve the shared repository mission through its existing lens rather than assigning it a separate objective.
+- Consolidate reusable command summaries into canonical prompt files when equivalent prompts already exist.
 - Prioritize readable code: names and structure should make behavior clear. Use focused comments for non-obvious behavior, invariants, and rationale; documentation must not substitute for code that explains itself.
 - Each agent must end passes by recording insights and applying obvious agent/doc improvements directly.
 - Each agent must keep the insights loop current by overwriting its current insight after focused passes.
@@ -581,7 +857,7 @@ Canonical files have separate jobs:
 
 - README remains human-facing and concise.
 - Copilot instructions remain durable ground rules, not a primary prompt warehouse.
-- Objectives map to active loops and verification methods.
+- Objectives define one shared mission, evidence model, and verification methods; active loops contribute specialized evidence and insight to it.
 - Agent passes produce insights that improve future passes.
 - Completed loop changes are committed and pushed, or an explicit Git handoff records why they are not.
 """
@@ -591,12 +867,28 @@ def _objectives_template(timestamp: str, summary: dict[str, Any]) -> str:
     """Render repository objectives from the analyzer's detected profile and rubric."""
 
     expectations = _format_expectations(summary["outcomeExpectations"])
+    objectives = "\n".join(f"{index}. {objective}" for index, objective in enumerate(_profile_objectives(summary["primaryKind"]), start=1))
+    specialists = summary["existingSpecialists"]
+    existing_agents = summary["existingAgents"]
+    specialist_map = (
+        f"- Existing specialist agents ({', '.join(specialists)}): serve the shared repository mission through recurring domain expertise for the detected profile."
+        if specialists
+        else f"- repo-specialist-agent: {summary['specialistMission']}"
+    )
+    agent_loop_map = (
+        f"- Existing agent loops ({', '.join(existing_agents)}): preserve each agent's mission, contribute specialized evidence to the shared repository mission, and maintain a matching current insight."
+        if existing_agents
+        else ""
+    )
+    validation_commands = "\n".join(f"- `{command}`" for command in summary["validationCommands"])
+    if not validation_commands:
+        validation_commands = "- Use the nearest repository-provided executable check for the changed behavior."
     return f"""<!-- Last modified: {timestamp} -->
 {MANAGED_MARKER}
 
 # Repository Objectives
 
-Use this file for the repo's aspirational objectives: what the repo is trying to become, what quality means here, and which loops keep it improving.
+Use this file for the shared repository mission: what the repo is trying to become, what quality means here, and how specialized loops contribute to that mission.
 
 ## Working Profile
 
@@ -605,16 +897,13 @@ Use this file for the repo's aspirational objectives: what the repo is trying to
 
 ## Aspirational Objectives
 
-1. Make the README a clear, concise capability page for the repo.
-2. Keep Copilot instructions focused on durable rules, validation, and cleanup expectations.
-3. Create missing `.github` collaboration surfaces when older repos do not have them.
-4. Use repo agents only for recurring domain work that benefits from a dedicated instruction surface.
-5. Tune repo-specialist guidance around the repo's actual language, content, product, or infrastructure work.
+{objectives}
 
 ## Agent Map
 
 - loop-improver-mcp: owns README/Copilot/objectives hygiene and decides which managed surfaces should exist.
-- repo-specialist-agent: {summary['specialistMission']}
+{specialist_map}
+{agent_loop_map}
 
 ## Outcome Expectations
 
@@ -623,7 +912,63 @@ Use this file for the repo's aspirational objectives: what the repo is trying to
 ## Verification
 
 Each loop pass should name the changed behavior, run the cheapest relevant check, capture evidence, and record what improved in .github/insights/.
+
+Detected commands:
+
+{validation_commands}
 """
+
+
+def _profile_objectives(primary_kind: RepoKind) -> list[str]:
+    """Return deterministic objectives that reflect the detected repository work."""
+
+    if primary_kind == "blog":
+        return [
+            "Publish useful articles with a consistent voice and clear audience value.",
+            "Keep article visuals, layouts, and navigation effective across supported viewports.",
+            "Verify the site build and rendered experience before publishing.",
+            "Keep collaboration guidance concise and route recurring editorial work through existing specialists.",
+        ]
+    if primary_kind == "python":
+        return [
+            "Keep the Python capability deterministic, readable, and stable at its public interfaces.",
+            "Cover behavior changes with focused tests and configured quality checks.",
+            "Remove dead or duplicated code after verifying references and framework usage.",
+            "Keep collaboration guidance concise and create specialist surfaces only for recurring work.",
+        ]
+    if primary_kind == "typescript":
+        return [
+            "Keep product behavior type-safe, testable, and stable across supported runtimes.",
+            "Preserve clear component and module boundaries as the product evolves.",
+            "Run configured tests, lint, type checks, or builds before delivery.",
+            "Keep collaboration guidance concise and create specialist surfaces only for recurring work.",
+        ]
+    if primary_kind == "rust":
+        return [
+            "Keep Rust behavior correct, explicit, and stable at library or CLI boundaries.",
+            "Use focused tests and configured lint checks to verify changes.",
+            "Prune dead code and unnecessary complexity after checking references.",
+            "Keep collaboration guidance concise and create specialist surfaces only for recurring work.",
+        ]
+    if primary_kind == "bicep":
+        return [
+            "Keep infrastructure templates minimal, repeatable, and explicit about environment assumptions.",
+            "Validate syntax and planned deployment changes before applying infrastructure.",
+            "Keep parameters, modules, and operational guidance aligned with active environments.",
+            "Keep collaboration guidance concise and create specialist surfaces only for recurring work.",
+        ]
+    if primary_kind == "docs":
+        return [
+            "Keep documentation accurate, navigable, concise, and useful to its intended audience.",
+            "Verify examples, links, and commands against current repository behavior.",
+            "Remove duplicated or stale guidance when canonical ownership is clear.",
+            "Keep collaboration guidance concise and create specialist surfaces only for recurring work.",
+        ]
+    return [
+        "Keep the repository's primary capability aligned with its documented audience and outcomes.",
+        "Make focused changes that preserve readability, validation, and maintainability.",
+        "Keep collaboration guidance concise and create specialist surfaces only for recurring work.",
+    ]
 
 
 def _format_expectations(expectations: dict[str, list[str]]) -> str:
@@ -639,6 +984,7 @@ def _format_expectations(expectations: dict[str, list[str]]) -> str:
 def _specialist_agent_template(timestamp: str, summary: dict[str, Any]) -> str:
     """Render the specialist agent that runs recurring repository improvement loops."""
 
+    practices = "\n".join(f"- {practice}" for practice in _profile_practices(summary["primaryKind"]))
     return f"""<!-- Last modified: {timestamp} -->
 {MANAGED_MARKER}
 ---
@@ -655,44 +1001,69 @@ Treat the detected technology profile as starting context. Derive domain-specifi
 
 {summary['specialistMission']}
 
-## Code Standard
+## Working Standard
 
-- Write for a reader who is still learning the language or repository.
-- Give each source file a brief header description of its role and how it fits into the system.
-- Give functions and classes concise docstrings that explain their responsibility and important inputs or results.
-- Prefer intention-revealing names, small single-purpose units, and direct control flow.
-- Comment only when rationale, invariants, constraints, or non-obvious tradeoffs cannot be made clear in code.
-- Remove comments that narrate the code, repeat names, or no longer match behavior.
-- Treat a need for explanatory prose as a signal to simplify the code first.
-- Review source comments in every changed code file.
-- Add or update focused comments where the code cannot preserve purpose, rationale, invariants, or constraints by itself.
-
-## Code Audit
-
-- Search for existing code before adding a new helper, type, module, or dependency.
-- Check references to changed and nearby symbols before deciding they are still needed.
-- Run the repository's dead-code tooling when available, and verify uncertain findings with reference searches.
-- Remove unused functions, classes, imports, tests, and comments when their behavior is no longer part of an active objective.
+{practices}
+- Search existing files and guidance before adding a parallel helper, document, prompt, or dependency.
+- Prefer intention-revealing names, small focused changes, and direct control flow.
+- Check references before removing or replacing existing behavior.
+- Use the detected commands in `.github/objectives.md`; do not invent validation that the repository does not provide.
+- Prune stale or duplicated material only when its ownership and replacement are clear.
 
 ## Loop
 
 1. Use the opening exchange to establish a concise session title, direction, and agreed endpoint.
-2. Identify one repo-specific improvement tied to an objective.
-3. Review analyze_github_loop attention guidance and choose one objective plus one focus folder or file cluster for the session.
-4. Read the owning files, nearest validation surface, and usages of the symbols likely to change.
-5. Prune dead code, stale docs, duplicated guidance, or unnecessary verbosity when that is the smallest useful improvement.
-6. Review changed code and source comments against the Code Standard; simplify first, then add focused comments where needed.
-7. Complete the Code Audit for changed and nearby symbols.
-8. Run the cheapest relevant executable check.
-9. Write durable notes before closing the loop by overwriting the current insight in .github/insights/repo-specialist-agent.md.
-10. Review the final diff and working tree, separating unrelated changes before closeout.
-11. Commit only the loop's intended changes with a meaningful message.
-12. Push the commit when the user has authorized it and the branch is safe to update.
+2. Identify one repo-specific improvement that advances the shared repository mission.
+3. Use analyze_github_loop attention guidance only as evidence for choosing a concrete focus area.
+4. Read the owning files, existing specialist guidance, and nearest validation surface.
+5. Make the smallest change that improves the chosen outcome, including pruning when appropriate.
+6. Run the cheapest relevant detected command and inspect behavior-specific output when available.
+7. Write durable notes by overwriting the current insight in .github/insights/repo-specialist-agent.md.
+8. Review the final diff and working tree, separating unrelated changes before closeout.
+9. Commit only the loop's intended changes with a meaningful message after the user has authorized it.
+10. Push only when the user has authorized it and the branch is safe to update.
 
 If validation fails, unrelated changes cannot be separated, or pushing is not authorized, do not claim the loop is complete; leave an explicit handoff with the repository status, remaining check, and exact next Git action.
 
 If the repo profile is wrong, update .github/objectives.md and this agent before doing specialized work.
 """
+
+
+def _profile_practices(primary_kind: RepoKind) -> list[str]:
+    """Return practical quality checks for a generated specialist's detected profile."""
+
+    practices: dict[RepoKind, list[str]] = {
+        "blog": [
+            "Preserve the author's voice, intended audience, and factual boundaries.",
+            "Check article structure, transitions, visual opportunities, and publish readiness.",
+            "Build the site and inspect rendered output when layout or visuals change.",
+        ],
+        "docs": [
+            "Keep the documented behavior accurate, navigable, concise, and useful to its intended reader.",
+            "Verify examples, links, and commands against the repository when practical.",
+        ],
+        "bicep": [
+            "Keep templates minimal, parameter intent explicit, and environment assumptions documented.",
+            "Validate deployment syntax and inspect planned changes before applying infrastructure.",
+        ],
+        "rust": [
+            "Keep ownership, error handling, public interfaces, and CLI behavior explicit.",
+            "Run focused tests and configured lint or formatting checks for changed crates.",
+        ],
+        "python": [
+            "Keep interfaces typed where the repository expects typing and make responsibilities clear in code.",
+            "Run focused tests plus configured lint and dead-code checks for changed modules.",
+        ],
+        "typescript": [
+            "Preserve type safety, runtime behavior, and the repository's component or module boundaries.",
+            "Run configured tests, lint, type checks, or builds for the changed package.",
+        ],
+        "generic": [
+            "Derive quality criteria from the repository's README, objectives, tests, and existing guidance.",
+            "Verify changed behavior through the nearest repository-provided executable check.",
+        ],
+    }
+    return practices[primary_kind]
 
 def _insights_readme_template(timestamp: str) -> str:
     """Render instructions for maintaining one current insight per loop surface."""

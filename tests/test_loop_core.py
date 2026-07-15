@@ -34,6 +34,19 @@ def test_analyze_tolerates_non_utf8_canonical_files(tmp_path: Path) -> None:
     assert "no-readme" in summary["signals"]
 
 
+def test_analyze_recognizes_personal_blog_capability_story(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(
+        "# My personal blog\n\n"
+        "This repo is the Astro version of my site. It is a working resume and a place to share ideas about security and leadership.\n",
+        encoding="utf-8",
+    )
+
+    summary = analyze_github_loop(str(tmp_path))
+
+    assert "explains-capability" in summary["readmeSignals"]
+    assert not any(item.startswith("README hygiene:") for item in summary["missing"])
+
+
 def test_analyze_surfaces_missing_and_stale_last_modified_files(tmp_path: Path) -> None:
     (tmp_path / "fresh.md").write_text("<!-- Last modified: 2026-07-01T00:00:00.000Z -->\n# Fresh\n", encoding="utf-8")
     (tmp_path / "stale.md").write_text("<!-- Last modified: 2026-05-01T00:00:00.000Z -->\n# Stale\n", encoding="utf-8")
@@ -52,8 +65,30 @@ def test_analyze_surfaces_missing_and_stale_last_modified_files(tmp_path: Path) 
     assert {item["path"] for item in summary["attention"]["staleLastModified"]} == {"stale.md"}
     assert summary["attention"]["staleAfterDays"] == 30
     assert summary["attention"]["sessionGuidance"]["focusFolders"][0] == {"folder": "docs", "attentionCount": 2}
-    assert "choose one objective" in summary["attention"]["sessionGuidance"]["instruction"]
+    assert "shared repository mission" in summary["attention"]["sessionGuidance"]["instruction"]
     assert summary["attention"]["sessionGuidance"]["objectiveCandidates"]
+
+
+def test_analyze_limits_timestamp_attention_to_durable_guidance(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Product\n\nA useful product capability.\n", encoding="utf-8")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "architecture.md").write_text("# Architecture\n", encoding="utf-8")
+    source = tmp_path / "src" / "content" / "posts"
+    source.mkdir(parents=True)
+    (source / "history.md").write_text("# Historical post\n", encoding="utf-8")
+    (tmp_path / "src" / "component.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    generated = tmp_path / ".astro"
+    generated.mkdir()
+    (generated / "types.d.ts").write_text("export {};\n", encoding="utf-8")
+
+    summary = analyze_github_loop(str(tmp_path))
+
+    assert "README.md" in summary["attention"]["missingLastModified"]
+    assert "docs/architecture.md" in summary["attention"]["missingLastModified"]
+    assert "src/content/posts/history.md" not in summary["attention"]["missingLastModified"]
+    assert "src/component.ts" not in summary["attention"]["missingLastModified"]
+    assert ".astro/types.d.ts" not in summary["attention"]["missingLastModified"]
 
 
 def test_analyze_respects_last_modified_stale_threshold(tmp_path: Path) -> None:
@@ -156,9 +191,51 @@ def test_apply_preserves_existing_instructions_and_adds_managed_files(tmp_path: 
     result = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
     instructions = (github / "copilot-instructions.md").read_text(encoding="utf-8")
 
-    assert instructions.startswith("# Existing rules")
+    assert instructions.startswith("<!-- Last modified:")
+    assert instructions.index("# Existing rules") < instructions.index("<!-- Managed by loop-improver-mcp -->")
+    assert "Keep this repo small." in instructions
     assert "Loop Architecture Contract" in instructions
     assert ".github/agents/repo-specialist-agent.agent.md" in result["changed"]
+
+
+def test_apply_consolidates_canonical_prompt_summaries_and_reports_improvements(tmp_path: Path) -> None:
+    github = tmp_path / ".github"
+    prompts = github / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "issue-planning.prompt.md").write_text("# Issue planning\n", encoding="utf-8")
+    (prompts / "visual-storytelling.prompt.md").write_text("# Visual storytelling\n", encoding="utf-8")
+    (github / "copilot-instructions.md").write_text(
+        "# Durable rules\n\nKeep customer facts private.\n\n"
+        "## Reusable prompt commands\n\n"
+        "### /issue-planning\nUse issue context before editing.\n\n"
+        "### /visual-storytelling\nBuild and review article graphics.\n\n"
+        "### /end-session\nCommit and push every session.\n\n"
+        "### /local-review\nPreserve this repo-specific command.\n\n"
+        "<!-- Managed by loop-improver-mcp -->\n\n"
+        "## Loop Architecture Contract\n\nOld generated contract.\n",
+        encoding="utf-8",
+    )
+
+    first = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+    instructions = (github / "copilot-instructions.md").read_text(encoding="utf-8")
+    second = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+
+    assert instructions.startswith("<!-- Last modified:")
+    assert "Keep customer facts private." in instructions
+    assert "### /issue-planning" not in instructions
+    assert "### /visual-storytelling" not in instructions
+    assert "### /end-session" not in instructions
+    assert "### /local-review" in instructions
+    assert instructions.count("<!-- Managed by loop-improver-mcp -->") == 1
+    assert instructions.count("## Loop Architecture Contract") == 1
+    assert "Old generated contract" not in instructions
+    assert first["instructionImprovements"] == [
+        "Removed /issue-planning summary because .github/prompts/issue-planning.prompt.md is canonical.",
+        "Removed /visual-storytelling summary because .github/prompts/visual-storytelling.prompt.md is canonical.",
+        "Removed legacy /end-session automation because Git closeout requires explicit authorization.",
+    ]
+    assert second["instructionImprovements"] == []
+    assert second["changed"] == []
 
 
 def test_apply_only_replaces_managed_marker_on_its_own_line(tmp_path: Path) -> None:
@@ -243,6 +320,91 @@ def test_apply_creates_objectives_for_typescript_repo(tmp_path: Path) -> None:
     assert result["after"]["primaryKind"] == "typescript"
 
 
+def test_apply_uses_existing_blog_specialists_and_nested_build(tmp_path: Path) -> None:
+    astro = tmp_path / "astro-site"
+    agents = tmp_path / ".github" / "agents"
+    astro.mkdir()
+    agents.mkdir(parents=True)
+    (astro / "astro.config.mjs").write_text("export default {};\n", encoding="utf-8")
+    (astro / "package.json").write_text(
+        '{"scripts":{"build":"astro build","audit:deck":"node scripts/deck-audit.mjs"}}\n',
+        encoding="utf-8",
+    )
+    (agents / "voice-publish-editor.agent.md").write_text(
+        "# Voice and publish editor\n\nReview article voice and publish readiness.\n",
+        encoding="utf-8",
+    )
+    (agents / "provider-reality-check.agent.md").write_text(
+        "# Provider reality check\n\nValidate one media provider used by an article visual.\n",
+        encoding="utf-8",
+    )
+    generated_specialist = agents / "repo-specialist-agent.agent.md"
+    generated_specialist.write_text(
+        "<!-- Managed by loop-improver-mcp -->\n\n# Old generated specialist\n",
+        encoding="utf-8",
+    )
+
+    result = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+    objectives = (tmp_path / ".github" / "objectives.md").read_text(encoding="utf-8")
+
+    assert result["after"]["specialistNeeded"] is False
+    assert result["after"]["existingSpecialists"] == ["voice-publish-editor"]
+    assert not generated_specialist.exists()
+    assert "Publish useful articles" in objectives
+    assert "cd astro-site && npm run build" in objectives
+    assert "voice-publish-editor" in objectives
+    assert "Prevent generation of a redundant generic repo specialist" in objectives
+
+
+def test_apply_upgrades_existing_agents_with_loops_and_current_insights(tmp_path: Path) -> None:
+    agents = tmp_path / ".github" / "agents"
+    agents.mkdir(parents=True)
+    (tmp_path / "astro.config.mjs").write_text("export default {};\n", encoding="utf-8")
+    (agents / "voice-publish-editor.agent.md").write_text(
+        "---\nname: Voice editor\ntools: [read, edit]\n---\n\n# Voice editor\n\nPreserve the author's voice.\n",
+        encoding="utf-8",
+    )
+    (agents / "site-reviewer.agent.md").write_text(
+        "---\nname: Site reviewer\ntools: [read, search]\n---\n\n# Site reviewer\n\nReview rendered pages.\n",
+        encoding="utf-8",
+    )
+
+    first = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+    editable_agent = (agents / "voice-publish-editor.agent.md").read_text(encoding="utf-8")
+    review_agent = (agents / "site-reviewer.agent.md").read_text(encoding="utf-8")
+    editable_insight = (tmp_path / ".github" / "insights" / "voice-publish-editor.md").read_text(encoding="utf-8")
+    review_insight = (tmp_path / ".github" / "insights" / "site-reviewer.md").read_text(encoding="utf-8")
+    objectives = (tmp_path / ".github" / "objectives.md").read_text(encoding="utf-8")
+    second = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+
+    assert "Preserve the author's voice." in editable_agent
+    assert "## Improvement Loop" in editable_agent
+    assert "overwrite `.github/insights/voice-publish-editor.md`" in editable_agent.lower()
+    assert "repository mission" in editable_agent
+    assert "to one objective" not in editable_agent
+    assert "Review rendered pages." in review_agent
+    assert "Return a ready-to-write current insight record" in review_agent
+    assert "# voice-publish-editor insight" in editable_insight
+    assert "# site-reviewer insight" in review_insight
+    assert "serve the shared repository mission" in objectives
+    assert first["agentImprovements"] == [
+        "Added managed improvement loop to .github/agents/site-reviewer.agent.md.",
+        "Added managed improvement loop to .github/agents/voice-publish-editor.agent.md.",
+    ]
+    assert second["agentImprovements"] == []
+    assert second["changed"] == []
+
+
+def test_apply_is_idempotent_when_repository_inputs_are_unchanged(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "python-mcp"\nversion = "0.1.0"\n', encoding="utf-8")
+
+    first = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+    second = apply_github_loop(str(tmp_path), overwrite_managed_files=True)
+
+    assert first["changed"]
+    assert second["changed"] == []
+
+
 def test_apply_refreshes_managed_objective_rubric_and_preserves_repo_sections(tmp_path: Path) -> None:
     github = tmp_path / ".github"
     github.mkdir()
@@ -283,8 +445,8 @@ def test_generated_guidance_uses_modern_contract(tmp_path: Path) -> None:
 
     assert "Let this MCP server own loop architecture" in instructions
     assert "Create one foundational loop architect" not in instructions
-    assert "Create missing `.github` collaboration surfaces" in objectives
-    assert "what quality means here, and which loops keep it improving" in objectives
+    assert "Keep the repository's primary capability aligned" in objectives
+    assert "shared repository mission" in objectives
     assert "## Outcome Expectations" in objectives
     assert "operational runbooks or agent rules" in objectives
     assert "verified improvements" in objectives
@@ -296,24 +458,14 @@ def test_generated_guidance_uses_modern_contract(tmp_path: Path) -> None:
 
     specialist = (tmp_path / ".github" / "agents" / "repo-specialist-agent.agent.md").read_text(encoding="utf-8")
     assert "Use the opening exchange to establish a concise session title, direction, and agreed endpoint." in specialist
-    assert "Prefer intention-revealing names, small single-purpose units, and direct control flow." in specialist
-    assert "Comment only when rationale, invariants, constraints, or non-obvious tradeoffs" in specialist
-    assert "Remove comments that narrate the code, repeat names, or no longer match behavior." in specialist
-    assert "Treat a need for explanatory prose as a signal to simplify the code first." in specialist
-    assert "Review source comments in every changed code file" in specialist
-    assert "Add or update focused comments where the code cannot preserve purpose" in specialist
     assert "Derive domain-specific loops from this repository's objectives" in specialist
-    assert "Give each source file a brief header description" in specialist
-    assert "Give functions and classes concise docstrings" in specialist
-    assert "Write for a reader who is still learning the language or repository" in specialist
-    assert "Search for existing code before adding a new helper" in specialist
-    assert "Check references to changed and nearby symbols" in specialist
-    assert "Run the repository's dead-code tooling" in specialist
-    assert "Remove unused functions, classes, imports, tests, and comments" in specialist
-    assert "Write durable notes before closing the loop" in specialist
+    assert "Search existing files and guidance before adding a parallel helper" in specialist
+    assert "Use the detected commands in `.github/objectives.md`" in specialist
+    assert "do not invent validation that the repository does not provide" in specialist
+    assert "Write durable notes by overwriting the current insight" in specialist
     assert "Review the final diff and working tree" in specialist
-    assert "Commit only the loop's intended changes with a meaningful message" in specialist
-    assert "Push the commit when the user has authorized it" in specialist
+    assert "Commit only the loop's intended changes with a meaningful message after the user has authorized it" in specialist
+    assert "Push only when the user has authorized it" in specialist
     assert "leave an explicit handoff" in specialist
 
 
